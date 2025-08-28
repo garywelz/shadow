@@ -1,10 +1,12 @@
 ---
-title: "Nerfies: Deformable Neural Radiance Fields"
+title: Shadow
 emoji: 🧠
 colorFrom: yellow
 colorTo: indigo
 sdk: static
 pinned: false
+license: cc-by-sa-4.0
+short_description: LLMs ghost write The Shadow of Lillya from fragments
 ---
 
 # Nerfies
