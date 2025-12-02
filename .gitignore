@@ -126,5 +126,11 @@ secrets.json
 # Hugging Face cache
 .huggingface/
 
+# Binary manuscript files (use Markdown versions instead)
+# PDFs and DOCX files should be uploaded via Hugging Face web interface if needed
+*.pdf
+*.docx
+*.doc
+
 
 
