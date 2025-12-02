@@ -1,0 +1,6 @@
+runtime: python3.9
+sdk: streamlit
+app_file: app.py
+
+
+

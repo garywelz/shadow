@@ -1,0 +1,13 @@
+streamlit>=1.28.0
+pandas>=2.0.0
+pathlib
+numpy>=1.24.0
+plotly>=5.15.0
+pymupdf>=1.23.0
+pdfplumber>=0.11.0
+pypdf2>=3.0.0
+openai>=1.0.0
+anthropic>=0.18.0
+
+
+
