@@ -383,14 +383,16 @@ def show_generate_page():
     
     with col1:
         provider = st.selectbox("LLM Provider", ["OpenAI", "Anthropic"])
-        model_name = st.text_input("Model Name", value="gpt-4" if provider == "OpenAI" else "claude-3-opus-20240229")
+        # Model selection is intentionally hidden: we default to a stable model per provider.
         max_tokens = st.slider("Max Tokens", 500, 4000, 2000)
         use_audrey_first = st.checkbox("Prefer Audrey-first edited material (if available)", value=True)
     
     with col2:
-        continuation_point = st.text_area("Continuation Point", 
-                                         placeholder="Optional: Specify where to continue from. Leave blank to continue from end of manuscript.",
-                                         height=100)
+        writing_request = st.text_area(
+            "Writing request (optional)",
+            placeholder="Example: Write a chapter about Lillya going to the Coronation of Czar Nicholas.",
+            height=120,
+        )
         target_words = st.slider("Target words (guideline)", 300, 4000, 1400, 100)
     
     if st.button("Generate Completion", type="primary"):
@@ -399,24 +401,17 @@ def show_generate_page():
                 import sys
                 
                 # Context is auto-managed (kept out of the UI to avoid confusion).
-                # We pass stable defaults that fit typical context windows.
-                shadow_tail_chars = 12000
-                circus_head_chars = 4000
-
                 # Build command
                 cmd = [sys.executable, "llm_completion.py", 
                        "--model", provider.lower(),
-                       "--model-name", model_name,
                        "--max-tokens", str(max_tokens),
-                       "--shadow-tail-chars", str(shadow_tail_chars),
-                       "--circus-chars", str(circus_head_chars),
                        "--target-words", str(target_words)]
 
                 if use_audrey_first:
                     cmd.append("--use-audrey-first")
                 
-                if continuation_point:
-                    cmd.extend(["--continuation-point", continuation_point])
+                if writing_request.strip():
+                    cmd.extend(["--writing-request", writing_request.strip()])
                 
                 # Set environment variables
                 env = os.environ.copy()

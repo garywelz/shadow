@@ -20,6 +20,147 @@ def _normalize_openai_key(value: str) -> str:
     m = re.search(r"(sk-(?:proj-)?[A-Za-z0-9_-]{10,})", v)
     return (m.group(1) if m else v).strip()
 
+def _approx_tokens_from_chars(char_count: int) -> int:
+    # Rough rule of thumb for English prose.
+    return max(1, int(char_count / 4))
+
+def _infer_openai_context_limit_tokens(model_name: str) -> int:
+    m = (model_name or "").lower().strip()
+    # Heuristic defaults; we intentionally avoid overconfidence.
+    if "128k" in m or m.startswith("gpt-4o") or m.startswith("gpt-4.1") or m.startswith("gpt-4o-mini"):
+        return 128_000
+    if m.startswith("gpt-4"):
+        return 32_768
+    if m.startswith("gpt-3.5"):
+        return 16_385
+    return 32_768
+
+def _extract_generated_continuation(markdown: str) -> str:
+    # The completion files saved by this project contain a "## Generated Continuation" section.
+    marker = "## Generated Continuation"
+    if marker in markdown:
+        after = markdown.split(marker, 1)[1]
+        # Cut off at next horizontal rule block if present.
+        if "\n---" in after:
+            after = after.split("\n---", 1)[0]
+        return after.strip()
+    return markdown.strip()
+
+def _load_all_markdown_texts(folder: Path) -> str:
+    if not folder.exists():
+        return ""
+    parts: list[str] = []
+    for p in sorted(folder.glob("*.md")):
+        try:
+            parts.append(p.read_text(encoding="utf-8", errors="ignore"))
+        except Exception:
+            continue
+    return "\n\n---\n\n".join([x for x in parts if x.strip()])
+
+def _load_completion_attempts_text(completions_dir: Path) -> str:
+    if not completions_dir.exists():
+        return ""
+    files = sorted(completions_dir.rglob("completion_*.md"), key=lambda p: p.stat().st_mtime)
+    parts: list[str] = []
+    for p in files:
+        try:
+            md = p.read_text(encoding="utf-8", errors="ignore")
+            txt = _extract_generated_continuation(md)
+            if txt:
+                parts.append(f"\n\n[AI continuation from {p.as_posix()}]\n\n{txt}".strip())
+        except Exception:
+            continue
+    return "\n\n---\n\n".join(parts)
+
+def _sandwich(text: str, head_chars: int, tail_chars: int, label: str) -> str:
+    t = text or ""
+    if head_chars <= 0 and tail_chars <= 0:
+        return ""
+    if len(t) <= head_chars + tail_chars + 200:
+        return t
+    head = t[: max(0, head_chars)].rstrip()
+    tail = t[-max(0, tail_chars) :].lstrip() if tail_chars > 0 else ""
+    omitted = len(t) - len(head) - len(tail)
+    return (
+        f"{head}\n\n"
+        f"[... omitted {omitted} characters from {label} to fit context window ...]\n\n"
+        f"{tail}"
+    )
+
+def pack_context_for_completion(
+    *,
+    circus_full: str,
+    shadow_working_full: str,
+    notes_full: str,
+    model_name: str,
+    max_output_tokens: int,
+    overhead_tokens: int = 1200,
+) -> tuple[dict[str, str], dict[str, int]]:
+    """
+    Try to include as much real text as possible within an estimated context window.
+    Priority: Shadow (working draft) > Circus > Notes.
+    Returns (packed_sections, report).
+    """
+    context_limit = _infer_openai_context_limit_tokens(model_name)
+    budget_input_tokens = max(2_000, context_limit - max_output_tokens - overhead_tokens)
+    budget_chars = budget_input_tokens * 4
+
+    circus = circus_full or ""
+    shadow = shadow_working_full or ""
+    notes = notes_full or ""
+
+    raw_total = len(circus) + len(shadow) + len(notes)
+    if raw_total <= budget_chars:
+        packed = {"circus": circus, "shadow": shadow, "notes": notes}
+        report = {
+            "context_limit_tokens": context_limit,
+            "budget_input_tokens": budget_input_tokens,
+            "budget_chars": budget_chars,
+            "circus_total_chars": len(circus),
+            "shadow_total_chars": len(shadow),
+            "notes_total_chars": len(notes),
+            "circus_included_chars": len(circus),
+            "shadow_included_chars": len(shadow),
+            "notes_included_chars": len(notes),
+            "truncated": 0,
+        }
+        return packed, report
+
+    # Allocate budget across sections. Shadow gets the biggest share.
+    shadow_budget = int(budget_chars * 0.60)
+    circus_budget = int(budget_chars * 0.35)
+    notes_budget = budget_chars - shadow_budget - circus_budget
+
+    # Shadow: keep both beginning and end (recency matters, but opening anchors names/setting).
+    shadow_head = int(shadow_budget * 0.25)
+    shadow_tail = shadow_budget - shadow_head
+    shadow_packed = _sandwich(shadow, shadow_head, shadow_tail, "Shadow (working draft)")
+
+    # Circus: keep beginning + end if it’s long; otherwise full.
+    circus_head = int(circus_budget * 0.70)
+    circus_tail = max(0, circus_budget - circus_head)
+    circus_packed = _sandwich(circus, circus_head, circus_tail, "Circus of the Queens")
+
+    # Notes: beginning only (usually outlines / short).
+    notes_packed = (notes[: max(0, notes_budget)]).strip()
+    if notes and len(notes) > len(notes_packed) + 200:
+        notes_packed = f"{notes_packed}\n\n[... notes truncated to fit context window ...]".strip()
+
+    packed = {"circus": circus_packed, "shadow": shadow_packed, "notes": notes_packed}
+    report = {
+        "context_limit_tokens": context_limit,
+        "budget_input_tokens": budget_input_tokens,
+        "budget_chars": budget_chars,
+        "circus_total_chars": len(circus),
+        "shadow_total_chars": len(shadow),
+        "notes_total_chars": len(notes),
+        "circus_included_chars": len(circus_packed),
+        "shadow_included_chars": len(shadow_packed),
+        "notes_included_chars": len(notes_packed),
+        "truncated": 1,
+    }
+    return packed, report
+
 class LLMCompletion:
     """Base class for LLM completion"""
     
@@ -41,24 +182,16 @@ class LLMCompletion:
         
         # Load Circus of the Queens
         circus_dir = manuscripts_dir / "Circus_of_the_Queens"
-        for md_file in circus_dir.glob("*.md"):
-            with open(md_file, 'r', encoding='utf-8') as f:
-                manuscripts['circus_of_the_queens'] = f.read()
+        manuscripts["circus_of_the_queens"] = _load_all_markdown_texts(circus_dir)
         
         # Load edited version of Shadow of Lillya (fallback if Audrey-first not present)
         if "shadow_edited" not in manuscripts:
             edited_dir = manuscripts_dir / "Shadow_of_Lillya" / "edited_version"
-            for md_file in edited_dir.glob("*.md"):
-                with open(md_file, 'r', encoding='utf-8') as f:
-                    manuscripts['shadow_edited'] = f.read()
+            manuscripts["shadow_edited"] = _load_all_markdown_texts(edited_dir)
         
         # Load unedited material
         unedited_dir = manuscripts_dir / "Shadow_of_Lillya" / "unedited_material"
-        unedited_texts = []
-        for md_file in unedited_dir.glob("*.md"):
-            with open(md_file, 'r', encoding='utf-8') as f:
-                unedited_texts.append(f.read())
-        manuscripts['shadow_unedited'] = '\n\n---\n\n'.join(unedited_texts)
+        manuscripts["shadow_unedited"] = _load_all_markdown_texts(unedited_dir)
         
         # Load notes and outlines
         shadow_dir = manuscripts_dir / "Shadow_of_Lillya"
@@ -68,44 +201,62 @@ class LLMCompletion:
                 with open(md_file, 'r', encoding='utf-8') as f:
                     notes.append(f.read())
         manuscripts['notes'] = '\n\n---\n\n'.join(notes)
+
+        # Build a working Shadow draft by appending prior completion attempts (chronological).
+        completions_text = _load_completion_attempts_text(self.completions_dir)
+        base_shadow = manuscripts.get("shadow_edited", "")
+        if completions_text.strip():
+            manuscripts["shadow_working"] = f"{base_shadow}\n\n---\n\n{completions_text}".strip()
+        else:
+            manuscripts["shadow_working"] = base_shadow
         
         return manuscripts
     
     def create_prompt(
         self,
         manuscripts: Dict[str, str],
-        continuation_point: Optional[str] = None,
+        writing_request: Optional[str] = None,
         *,
-        circus_chars: int = 4000,
-        shadow_tail_chars: int = 12000,
-        unedited_chars: int = 2000,
-        notes_chars: int = 4000,
         target_words: int = 1400,
+        max_output_tokens: int = 2000,
+        model_name: str = "gpt-4",
     ) -> str:
-        """Create a prompt for LLM completion"""
+        """Create a prompt for LLM completion using an auto-packed context window."""
         circus = manuscripts.get("circus_of_the_queens", "")
-        shadow = manuscripts.get("shadow_edited", "")
-        unedited = manuscripts.get("shadow_unedited", "")
+        shadow_working = manuscripts.get("shadow_working", manuscripts.get("shadow_edited", ""))
         notes = manuscripts.get("notes", "")
 
-        circus_excerpt = circus[: max(0, circus_chars)]
-        shadow_excerpt = shadow[-max(0, shadow_tail_chars) :] if shadow_tail_chars > 0 else ""
-        unedited_excerpt = unedited[: max(0, unedited_chars)]
-        notes_excerpt = notes[: max(0, notes_chars)]
+        packed, report = pack_context_for_completion(
+            circus_full=circus,
+            shadow_working_full=shadow_working,
+            notes_full=notes,
+            model_name=model_name,
+            max_output_tokens=max_output_tokens,
+        )
+
+        packing_report = (
+            f"PACKING REPORT (estimated):\n"
+            f"- Model context limit (tokens): {report['context_limit_tokens']}\n"
+            f"- Input budget (tokens): {report['budget_input_tokens']}\n"
+            f"- Input budget (chars): {report['budget_chars']}\n"
+            f"- Circus included/total (chars): {report['circus_included_chars']}/{report['circus_total_chars']}\n"
+            f"- Shadow included/total (chars): {report['shadow_included_chars']}/{report['shadow_total_chars']}\n"
+            f"- Notes included/total (chars): {report['notes_included_chars']}/{report['notes_total_chars']}\n"
+            f"- Truncated: {'yes' if report['truncated'] else 'no'}\n"
+        )
 
         prompt = f"""You are completing the novel "The Shadow of Lillya" by Audrey Berger Welz. This is a sequel/prequel to her novel "Circus of the Queens."
 
+{packing_report}
+
 CONTEXT - CIRCUS OF THE QUEENS:
-{circus_excerpt}
+{packed['circus']}
 
-CURRENT MANUSCRIPT - THE SHADOW OF LILLYA (Edited Version):
-{shadow_excerpt}
+WORKING MANUSCRIPT - THE SHADOW OF LILLYA (Audrey draft + your appended continuations):
+{packed['shadow']}
 
-ADDITIONAL MATERIAL - UNEDITED VERSIONS:
-{unedited_excerpt}
-
-NOTES AND OUTLINES:
-{notes_excerpt}
+NOTES AND OUTLINES (if any):
+{packed['notes']}
 
 INSTRUCTIONS:
 1. Continue the story from where Audrey left off, maintaining her unique voice and writing style
@@ -114,8 +265,8 @@ INSTRUCTIONS:
 4. Ensure character consistency and plot coherence
 5. Write in a style that matches Audrey's voice as closely as possible
 
-CONTINUATION POINT:
-{continuation_point if continuation_point else 'Continue from the end of the edited manuscript.'}
+WRITING REQUEST (optional):
+{writing_request if writing_request else 'Continue naturally from the end of the working Shadow draft.'}
 
 OUTPUT:
 - Write approximately {target_words} words (flexible).
@@ -248,18 +399,10 @@ def main():
                        help='API key (or set environment variable)')
     parser.add_argument('--max-tokens', type=int, default=2000,
                        help='Maximum tokens to generate')
-    parser.add_argument('--continuation-point', type=str,
-                       help='Specific point in text to continue from')
+    parser.add_argument('--writing-request', type=str,
+                       help='Optional instruction/request for what to write next (e.g., a specific scene or chapter)')
     parser.add_argument('--use-audrey-first', action='store_true',
                         help='Prefer Audrey-first edited material if present (default behavior). Included for clarity in logs/UI.')
-    parser.add_argument('--circus-chars', type=int, default=4000,
-                        help='How many characters of Circus to include (from the beginning)')
-    parser.add_argument('--shadow-tail-chars', type=int, default=12000,
-                        help='How many characters of Shadow to include (from the end)')
-    parser.add_argument('--unedited-chars', type=int, default=2000,
-                        help='How many characters of unedited Shadow material to include')
-    parser.add_argument('--notes-chars', type=int, default=4000,
-                        help='How many characters of notes/outlines to include')
     parser.add_argument('--target-words', type=int, default=1400,
                         help='Approximate word target for the continuation')
     
@@ -275,12 +418,10 @@ def main():
     print("📝 Creating prompt...")
     prompt = base_completion.create_prompt(
         manuscripts,
-        args.continuation_point,
-        circus_chars=args.circus_chars,
-        shadow_tail_chars=args.shadow_tail_chars,
-        unedited_chars=args.unedited_chars,
-        notes_chars=args.notes_chars,
+        args.writing_request,
         target_words=args.target_words,
+        max_output_tokens=args.max_tokens,
+        model_name=model_name,
     )
     print(f"  ✓ Prompt created ({len(prompt)} characters)")
     
@@ -304,7 +445,7 @@ def main():
             'model': llm.model_name,
             'model_full': model_name,
             'timestamp': datetime.now().isoformat(),
-            'continuation_point': args.continuation_point or 'End of edited manuscript',
+            'writing_request': args.writing_request or '',
             'max_tokens': args.max_tokens,
             'completion_length': len(completion)
         }
