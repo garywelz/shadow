@@ -10,6 +10,15 @@ from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Optional
 import argparse
+import re
+
+def _normalize_openai_key(value: str) -> str:
+    v = value.strip().strip('"').strip("'")
+    for prefix in ("export ", "OPENAI_API_KEY="):
+        if v.startswith(prefix):
+            v = v[len(prefix):].strip().strip('"').strip("'")
+    m = re.search(r"(sk-(?:proj-)?[A-Za-z0-9_-]{10,})", v)
+    return (m.group(1) if m else v).strip()
 
 class LLMCompletion:
     """Base class for LLM completion"""
@@ -171,11 +180,11 @@ class OpenAICompletion(LLMCompletion):
         self.api_key = api_key or os.getenv('OPENAI_API_KEY')
         if not self.api_key:
             raise ValueError("OpenAI API key required. Set OPENAI_API_KEY environment variable.")
-        if self.api_key.strip().startswith("OPENAI_") or "OPENAI_API_KEY" in self.api_key or self.api_key.strip().startswith("OPENAI_API_KEY="):
-            raise ValueError(
-                "OpenAI API key looks invalid (it appears you provided the env var name, not the key). "
-                "Set OPENAI_API_KEY to your actual key that starts with 'sk-'."
-            )
+        self.api_key = _normalize_openai_key(self.api_key)
+        if self.api_key.strip() in {"OPENAI_API_KEY", "OPENAI_API_KEY="} or self.api_key.strip().startswith("OPENAI_"):
+            raise ValueError("OpenAI API key looks invalid. Set OPENAI_API_KEY to your actual key that starts with 'sk-'.")
+        if not (self.api_key.startswith("sk-") or self.api_key.startswith("sk-proj-")):
+            raise ValueError("OpenAI API key looks invalid. It should start with 'sk-' (or 'sk-proj-').")
     
     def generate_completion(self, prompt: str, max_tokens: int = 2000) -> str:
         """Generate completion using OpenAI API"""

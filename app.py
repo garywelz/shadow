@@ -130,8 +130,16 @@ def _run_python_script(script: str, args: list[str], env: dict[str, str]) -> tup
     proc = subprocess.run(cmd, capture_output=True, text=True, env=env)
     return proc.returncode, proc.stdout, proc.stderr
 
+def _normalize_openai_key(value: str) -> str:
+    v = value.strip().strip('"').strip("'")
+    for prefix in ("export ", "OPENAI_API_KEY="):
+        if v.startswith(prefix):
+            v = v[len(prefix):].strip().strip('"').strip("'")
+    m = re.search(r"(sk-(?:proj-)?[A-Za-z0-9_-]{10,})", v)
+    return (m.group(1) if m else v).strip()
+
 def _looks_like_openai_key(value: str) -> bool:
-    v = value.strip()
+    v = _normalize_openai_key(value)
     return v.startswith("sk-") or v.startswith("sk-proj-")
 
 def _looks_like_anthropic_key(value: str) -> bool:
@@ -396,13 +404,16 @@ def show_generate_page():
     if st.button("Generate Completion", type="primary"):
         # Validate optional inline key to prevent common mistakes (e.g., typing the env var name)
         if api_key.strip():
-            if provider == "OpenAI" and not _looks_like_openai_key(api_key):
-                st.error(
-                    "That doesn’t look like an OpenAI API key. "
-                    "If you set `OPENAI_API_KEY` in Space Secrets, leave this field blank."
-                )
-                return
-            if provider == "Anthropic" and not _looks_like_anthropic_key(api_key):
+            if provider == "OpenAI":
+                normalized = _normalize_openai_key(api_key)
+                if not _looks_like_openai_key(normalized):
+                    st.error(
+                        "That doesn’t look like an OpenAI API key. "
+                        "If you set `OPENAI_API_KEY` in Space Secrets, leave this field blank."
+                    )
+                    return
+                api_key = normalized
+            elif provider == "Anthropic" and not _looks_like_anthropic_key(api_key):
                 st.error(
                     "That doesn’t look like an Anthropic API key. "
                     "If you set `ANTHROPIC_API_KEY` in Space Secrets, leave this field blank."
