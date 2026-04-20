@@ -30,6 +30,16 @@ st.markdown("""
         text-align: center;
         margin-bottom: 3rem;
     }
+    .nav-callout {
+        border: 1px solid rgba(31, 119, 180, 0.35);
+        background: linear-gradient(90deg, rgba(31, 119, 180, 0.12), rgba(142, 68, 173, 0.08));
+        padding: 0.9rem 1rem;
+        border-radius: 0.75rem;
+        margin: 1.25rem 0 1.5rem 0;
+    }
+    .nav-callout strong {
+        color: #1f77b4;
+    }
     .section-header {
         font-size: 2rem;
         color: #2c3e50;
@@ -44,6 +54,30 @@ st.markdown("""
         padding: 1rem;
         background-color: #f8f9fa;
         border-left: 4px solid #1f77b4;
+    }
+
+    /* Sidebar styling (Streamlit testid selectors are relatively stable) */
+    section[data-testid="stSidebar"] {
+        min-width: 320px;
+        width: 320px;
+        background: linear-gradient(180deg, rgba(31, 119, 180, 0.10), rgba(142, 68, 173, 0.06));
+        border-right: 1px solid rgba(44, 62, 80, 0.18);
+    }
+    section[data-testid="stSidebar"] h2, section[data-testid="stSidebar"] h1, section[data-testid="stSidebar"] h3 {
+        letter-spacing: 0.2px;
+    }
+    section[data-testid="stSidebar"] .sidebar-card {
+        border: 1px solid rgba(44, 62, 80, 0.18);
+        background: rgba(255, 255, 255, 0.65);
+        border-radius: 0.75rem;
+        padding: 0.75rem 0.85rem;
+        margin-bottom: 0.75rem;
+        box-shadow: 0 1px 8px rgba(0,0,0,0.04);
+    }
+    section[data-testid="stSidebar"] .sidebar-hint {
+        font-size: 0.95rem;
+        color: rgba(44, 62, 80, 0.82);
+        margin-top: 0.25rem;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -114,13 +148,45 @@ def main():
     Our mission is to use multiple Large Language Models to complete the novel as authentically as possible, 
     staying true to Audrey's original intentions and preserving her unique voice and storytelling style.
     """)
+
+    st.markdown(
+        """
+        <div class="nav-callout">
+          <strong>New here?</strong> Use the <strong>left sidebar</strong> to navigate:
+          <span style="white-space:nowrap;">📚 Manuscripts</span>,
+          <span style="white-space:nowrap;">✨ Generate</span>,
+          <span style="white-space:nowrap;">🧪 Attempts</span>,
+          <span style="white-space:nowrap;">📊 Voice</span>.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     
     # Sidebar navigation
-    st.sidebar.title("Navigation")
-    page = st.sidebar.selectbox(
-        "Choose a section:",
-        ["Home", "Original Manuscripts", "Generate Completion", "Completion Attempts", "Voice Analysis", "About Audrey"]
+    st.sidebar.markdown(
+        """
+        <div class="sidebar-card">
+          <div style="font-size:1.15rem; font-weight:700; color:#2c3e50;">Navigation</div>
+          <div class="sidebar-hint">Pick a section below. The sidebar stays open by default.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
+
+    nav_items = {
+        "🏠 Home": "Home",
+        "📚 Manuscripts": "Original Manuscripts",
+        "✨ Generate": "Generate Completion",
+        "🧪 Attempts": "Completion Attempts",
+        "📊 Voice": "Voice Analysis",
+        "👤 About": "About Audrey",
+    }
+    choice = st.sidebar.radio(
+        "Go to",
+        options=list(nav_items.keys()),
+        label_visibility="collapsed",
+    )
+    page = nav_items[choice]
     
     if page == "Home":
         show_home_page()
