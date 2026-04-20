@@ -4,6 +4,8 @@
 
 This Hugging Face Space is dedicated to completing **The Shadow of Lillya**, a novel by the late **Audrey Berger Welz**. This work serves as both a sequel and prequel to her previous novel, **Circus of the Queens**.
 
+This is an ongoing **research + craft** project: build tooling that helps preserve Audrey’s authentic voice, organize source material, and (optionally) use LLMs to propose clearly-attributed continuations.
+
 ## Project Mission
 
 **Our primary goal is to use as much of Audrey Berger Welz's original material and original intent as possible.**
@@ -40,6 +42,27 @@ Our approach prioritizes Audrey's original material:
 
 See `WORKFLOW_AUDREY_FIRST.md` for detailed workflow instructions.
 
+## How the Space works
+
+The Streamlit app (`app.py`) provides:
+
+- **Manuscript browser**: view and download the markdown manuscript files under `manuscripts/`
+- **Search**: keyword/phrase search across manuscripts with contextual snippets
+- **Audrey-first tools**: buttons to run:
+  - `extract_audrey_material.py`
+  - `edit_audrey_material.py`
+  - `compile_final_manuscript.py`
+- **LLM completion generator** (optional): runs `llm_completion.py` with adjustable context sizes
+
+## LLM keys (optional)
+
+If you want to generate completions inside the Space, configure Space secrets:
+
+- `OPENAI_API_KEY` for OpenAI models
+- `ANTHROPIC_API_KEY` for Anthropic models
+
+You can also paste a key into the UI for a single run, but Space secrets are preferred.
+
 ## Contributing
 
 This is a deeply personal project honoring Audrey's literary legacy. While this space serves as a memorial and completion effort, we welcome respectful engagement with the material.
@@ -47,9 +70,11 @@ This is a deeply personal project honoring Audrey's literary legacy. While this 
 ## Key Files and Tools
 
 ### Material Organization
-- `manuscripts/Shadow_of_Lillya/audrey_original/` - Extracted original material
-- `manuscripts/Shadow_of_Lillya/audrey_edited/` - Edited for clarity (minimal changes)
-- `manuscripts/Shadow_of_Lillya/final_compilation/` - Final manuscript with attribution
+- `manuscripts/Shadow_of_Lillya/edited_version/` - Draft sent to editor (reference)
+- `manuscripts/Shadow_of_Lillya/unedited_material/` - Other draft material (reference)
+- `manuscripts/Shadow_of_Lillya/audrey_original/` - Extracted original material (generated)
+- `manuscripts/Shadow_of_Lillya/audrey_edited/` - Edited for clarity (generated)
+- `manuscripts/Shadow_of_Lillya/final_compilation/` - Final manuscript with attribution (generated)
 
 ### Workflow Tools
 - `extract_audrey_material.py` - Extract only Audrey's original writing
