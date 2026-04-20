@@ -384,46 +384,25 @@ def show_generate_page():
     with col1:
         provider = st.selectbox("LLM Provider", ["OpenAI", "Anthropic"])
         model_name = st.text_input("Model Name", value="gpt-4" if provider == "OpenAI" else "claude-3-opus-20240229")
-        api_key = st.text_input(
-            "API Key (optional)",
-            type="password",
-            help="Leave blank to use Hugging Face Space Secrets (OPENAI_API_KEY / ANTHROPIC_API_KEY).",
-        )
         max_tokens = st.slider("Max Tokens", 500, 4000, 2000)
         use_audrey_first = st.checkbox("Prefer Audrey-first edited material (if available)", value=True)
-        shadow_tail_chars = st.slider("Shadow context (last characters)", 2_000, 40_000, 12_000, 1_000)
-        circus_head_chars = st.slider("Circus context (first characters)", 0, 15_000, 4_000, 500)
     
     with col2:
         continuation_point = st.text_area("Continuation Point", 
                                          placeholder="Optional: Specify where to continue from. Leave blank to continue from end of manuscript.",
                                          height=100)
         target_words = st.slider("Target words (guideline)", 300, 4000, 1400, 100)
-        st.info("💡 If no API key is configured, generation will fail—use the Manuscripts tab to prep Audrey-first material first.")
     
     if st.button("Generate Completion", type="primary"):
-        # Validate optional inline key to prevent common mistakes (e.g., typing the env var name)
-        if api_key.strip():
-            if provider == "OpenAI":
-                normalized = _normalize_openai_key(api_key)
-                if not _looks_like_openai_key(normalized):
-                    st.error(
-                        "That doesn’t look like an OpenAI API key. "
-                        "If you set `OPENAI_API_KEY` in Space Secrets, leave this field blank."
-                    )
-                    return
-                api_key = normalized
-            elif provider == "Anthropic" and not _looks_like_anthropic_key(api_key):
-                st.error(
-                    "That doesn’t look like an Anthropic API key. "
-                    "If you set `ANTHROPIC_API_KEY` in Space Secrets, leave this field blank."
-                )
-                return
-
         with st.spinner("Generating completion..."):
             try:
                 import sys
                 
+                # Context is auto-managed (kept out of the UI to avoid confusion).
+                # We pass stable defaults that fit typical context windows.
+                shadow_tail_chars = 12000
+                circus_head_chars = 4000
+
                 # Build command
                 cmd = [sys.executable, "llm_completion.py", 
                        "--model", provider.lower(),
@@ -436,17 +415,11 @@ def show_generate_page():
                 if use_audrey_first:
                     cmd.append("--use-audrey-first")
                 
-                if api_key:
-                    cmd.extend(["--api-key", api_key])
                 if continuation_point:
                     cmd.extend(["--continuation-point", continuation_point])
                 
                 # Set environment variables
                 env = os.environ.copy()
-                if provider == "OpenAI" and api_key:
-                    env["OPENAI_API_KEY"] = api_key
-                elif provider == "Anthropic" and api_key:
-                    env["ANTHROPIC_API_KEY"] = api_key
                 
                 result = subprocess.run(cmd, capture_output=True, text=True, env=env)
                 
