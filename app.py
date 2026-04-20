@@ -382,8 +382,9 @@ def show_generate_page():
     col1, col2 = st.columns(2)
     
     with col1:
-        provider = st.selectbox("LLM Provider", ["OpenAI", "Anthropic"])
-        # Model selection is intentionally hidden: we default to a stable model per provider.
+        provider = "openai"
+        model_name = "gpt-4"
+        st.markdown(f"**LLM:** OpenAI (`{model_name}`)")
         max_tokens = st.slider("Max Tokens", 500, 4000, 2000)
         use_audrey_first = st.checkbox("Prefer Audrey-first edited material (if available)", value=True)
     
@@ -403,7 +404,8 @@ def show_generate_page():
                 # Context is auto-managed (kept out of the UI to avoid confusion).
                 # Build command
                 cmd = [sys.executable, "llm_completion.py", 
-                       "--model", provider.lower(),
+                       "--model", provider,
+                       "--model-name", model_name,
                        "--max-tokens", str(max_tokens),
                        "--target-words", str(target_words)]
 
