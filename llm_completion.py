@@ -407,6 +407,14 @@ def main():
                         help='Approximate word target for the continuation')
     
     args = parser.parse_args()
+
+    # Resolve model name early (used for context packing + API call)
+    if args.model == 'openai':
+        model_name = args.model_name or "gpt-4"
+    elif args.model == 'anthropic':
+        model_name = args.model_name or "claude-3-opus-20240229"
+    else:
+        model_name = args.model_name or "gpt-4"
     
     # Load manuscripts
     print("📚 Loading manuscripts...")
@@ -428,10 +436,8 @@ def main():
     # Initialize LLM
     print(f"🤖 Initializing {args.model}...")
     if args.model == 'openai':
-        model_name = args.model_name or "gpt-4"
         llm = OpenAICompletion(model_name, args.api_key)
     elif args.model == 'anthropic':
-        model_name = args.model_name or "claude-3-opus-20240229"
         llm = AnthropicCompletion(model_name, args.api_key)
     
     # Generate completion
