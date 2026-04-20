@@ -35,6 +35,23 @@ def _infer_openai_context_limit_tokens(model_name: str) -> int:
         return 16_385
     return 32_768
 
+def _infer_openai_tpm_limit_tokens(model_name: str) -> int:
+    """
+    Best-effort tokens-per-minute cap for a single request.
+    Override via env: OPENAI_TPM_LIMIT_TOKENS.
+    """
+    env_val = os.getenv("OPENAI_TPM_LIMIT_TOKENS", "").strip()
+    if env_val:
+        try:
+            return int(env_val)
+        except ValueError:
+            pass
+    m = (model_name or "").lower().strip()
+    # Conservative default; organizations differ. gpt-4 commonly has 10k TPM.
+    if m.startswith("gpt-4") or m.startswith("gpt-3.5"):
+        return 10_000
+    return 10_000
+
 def _extract_generated_continuation(markdown: str) -> str:
     # The completion files saved by this project contain a "## Generated Continuation" section.
     marker = "## Generated Continuation"
@@ -102,7 +119,10 @@ def pack_context_for_completion(
     Returns (packed_sections, report).
     """
     context_limit = _infer_openai_context_limit_tokens(model_name)
-    budget_input_tokens = max(2_000, context_limit - max_output_tokens - overhead_tokens)
+    tpm_limit = _infer_openai_tpm_limit_tokens(model_name)
+    # Safety margin under TPM ceiling to account for estimation error.
+    effective_limit = min(context_limit, int(tpm_limit * 0.90))
+    budget_input_tokens = max(2_000, effective_limit - max_output_tokens - overhead_tokens)
     budget_chars = budget_input_tokens * 4
 
     circus = circus_full or ""
@@ -114,6 +134,8 @@ def pack_context_for_completion(
         packed = {"circus": circus, "shadow": shadow, "notes": notes}
         report = {
             "context_limit_tokens": context_limit,
+            "tpm_limit_tokens": tpm_limit,
+            "effective_limit_tokens": effective_limit,
             "budget_input_tokens": budget_input_tokens,
             "budget_chars": budget_chars,
             "circus_total_chars": len(circus),
@@ -149,6 +171,8 @@ def pack_context_for_completion(
     packed = {"circus": circus_packed, "shadow": shadow_packed, "notes": notes_packed}
     report = {
         "context_limit_tokens": context_limit,
+        "tpm_limit_tokens": tpm_limit,
+        "effective_limit_tokens": effective_limit,
         "budget_input_tokens": budget_input_tokens,
         "budget_chars": budget_chars,
         "circus_total_chars": len(circus),
@@ -237,6 +261,8 @@ class LLMCompletion:
         packing_report = (
             f"PACKING REPORT (estimated):\n"
             f"- Model context limit (tokens): {report['context_limit_tokens']}\n"
+            f"- TPM limit (tokens/min): {report.get('tpm_limit_tokens', 'n/a')}\n"
+            f"- Effective limit used (tokens): {report.get('effective_limit_tokens', 'n/a')}\n"
             f"- Input budget (tokens): {report['budget_input_tokens']}\n"
             f"- Input budget (chars): {report['budget_chars']}\n"
             f"- Circus included/total (chars): {report['circus_included_chars']}/{report['circus_total_chars']}\n"
