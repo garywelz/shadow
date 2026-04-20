@@ -171,6 +171,11 @@ class OpenAICompletion(LLMCompletion):
         self.api_key = api_key or os.getenv('OPENAI_API_KEY')
         if not self.api_key:
             raise ValueError("OpenAI API key required. Set OPENAI_API_KEY environment variable.")
+        if self.api_key.strip().startswith("OPENAI_") or "OPENAI_API_KEY" in self.api_key or self.api_key.strip().startswith("OPENAI_API_KEY="):
+            raise ValueError(
+                "OpenAI API key looks invalid (it appears you provided the env var name, not the key). "
+                "Set OPENAI_API_KEY to your actual key that starts with 'sk-'."
+            )
     
     def generate_completion(self, prompt: str, max_tokens: int = 2000) -> str:
         """Generate completion using OpenAI API"""

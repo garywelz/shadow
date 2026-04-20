@@ -130,39 +130,16 @@ def _run_python_script(script: str, args: list[str], env: dict[str, str]) -> tup
     proc = subprocess.run(cmd, capture_output=True, text=True, env=env)
     return proc.returncode, proc.stdout, proc.stderr
 
-def main():
-    # Header
-    st.markdown('<h1 class="main-header">The Shadow of Lillya</h1>', unsafe_allow_html=True)
-    st.markdown('<p class="subtitle">Novel Completion Project</p>', unsafe_allow_html=True)
-    
-    # Quote
-    st.markdown('<div class="quote">"The shadow knows what the light cannot see."<br>— Audrey Berger Welz</div>', unsafe_allow_html=True)
-    
-    # Introduction
-    st.markdown("""
-    ## About This Project
-    
-    This space is dedicated to completing **The Shadow of Lillya**, a novel by the late **Audrey Berger Welz**. 
-    This work serves as both a sequel and prequel to her previous novel, **Circus of the Queens**.
-    
-    Our mission is to use multiple Large Language Models to complete the novel as authentically as possible, 
-    staying true to Audrey's original intentions and preserving her unique voice and storytelling style.
-    """)
+def _looks_like_openai_key(value: str) -> bool:
+    v = value.strip()
+    return v.startswith("sk-") or v.startswith("sk-proj-")
 
-    st.markdown(
-        """
-        <div class="nav-callout">
-          <strong>New here?</strong> Use the <strong>left sidebar</strong> to navigate:
-          <span style="white-space:nowrap;">📚 Manuscripts</span>,
-          <span style="white-space:nowrap;">✨ Generate</span>,
-          <span style="white-space:nowrap;">🧪 Attempts</span>,
-          <span style="white-space:nowrap;">📊 Voice</span>.
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    
-    # Sidebar navigation
+def _looks_like_anthropic_key(value: str) -> bool:
+    v = value.strip()
+    return v.startswith("sk-ant-")
+
+def main():
+    # Sidebar navigation (choose page first so we can show a clear "current section" header)
     st.sidebar.markdown(
         """
         <div class="sidebar-card">
@@ -187,6 +164,38 @@ def main():
         label_visibility="collapsed",
     )
     page = nav_items[choice]
+
+    # Compact header (always visible) + clear current section indicator
+    st.markdown('<h1 class="main-header">The Shadow of Lillya</h1>', unsafe_allow_html=True)
+    st.markdown('<p class="subtitle">Novel Completion Project</p>', unsafe_allow_html=True)
+    st.markdown(f"**Current section:** {choice}")
+    st.markdown("---")
+
+    # Only show the long intro/quote on Home so other pages feel distinct.
+    if page == "Home":
+        st.markdown('<div class="quote">"The shadow knows what the light cannot see."<br>— Audrey Berger Welz</div>', unsafe_allow_html=True)
+        st.markdown("""
+        ## About This Project
+        
+        This space is dedicated to completing **The Shadow of Lillya**, a novel by the late **Audrey Berger Welz**. 
+        This work serves as both a sequel and prequel to her previous novel, **Circus of the Queens**.
+        
+        Our mission is to use multiple Large Language Models to complete the novel as authentically as possible, 
+        staying true to Audrey's original intentions and preserving her unique voice and storytelling style.
+        """)
+
+        st.markdown(
+            """
+            <div class="nav-callout">
+              <strong>New here?</strong> Use the <strong>left sidebar</strong> to navigate:
+              <span style="white-space:nowrap;">📚 Manuscripts</span>,
+              <span style="white-space:nowrap;">✨ Generate</span>,
+              <span style="white-space:nowrap;">🧪 Attempts</span>,
+              <span style="white-space:nowrap;">📊 Voice</span>.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
     
     if page == "Home":
         show_home_page()
@@ -367,7 +376,11 @@ def show_generate_page():
     with col1:
         provider = st.selectbox("LLM Provider", ["OpenAI", "Anthropic"])
         model_name = st.text_input("Model Name", value="gpt-4" if provider == "OpenAI" else "claude-3-opus-20240229")
-        api_key = st.text_input("API Key (optional)", type="password", help="Prefer setting Space secrets (OPENAI_API_KEY / ANTHROPIC_API_KEY).")
+        api_key = st.text_input(
+            "API Key (optional)",
+            type="password",
+            help="Leave blank to use Hugging Face Space Secrets (OPENAI_API_KEY / ANTHROPIC_API_KEY).",
+        )
         max_tokens = st.slider("Max Tokens", 500, 4000, 2000)
         use_audrey_first = st.checkbox("Prefer Audrey-first edited material (if available)", value=True)
         shadow_tail_chars = st.slider("Shadow context (last characters)", 2_000, 40_000, 12_000, 1_000)
@@ -381,6 +394,21 @@ def show_generate_page():
         st.info("💡 If no API key is configured, generation will fail—use the Manuscripts tab to prep Audrey-first material first.")
     
     if st.button("Generate Completion", type="primary"):
+        # Validate optional inline key to prevent common mistakes (e.g., typing the env var name)
+        if api_key.strip():
+            if provider == "OpenAI" and not _looks_like_openai_key(api_key):
+                st.error(
+                    "That doesn’t look like an OpenAI API key. "
+                    "If you set `OPENAI_API_KEY` in Space Secrets, leave this field blank."
+                )
+                return
+            if provider == "Anthropic" and not _looks_like_anthropic_key(api_key):
+                st.error(
+                    "That doesn’t look like an Anthropic API key. "
+                    "If you set `ANTHROPIC_API_KEY` in Space Secrets, leave this field blank."
+                )
+                return
+
         with st.spinner("Generating completion..."):
             try:
                 import sys
