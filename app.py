@@ -161,8 +161,8 @@ def main():
     nav_items = {
         "🏠 Home": "Home",
         "📚 Manuscripts": "Original Manuscripts",
-        "✨ Generate": "Generate Completion",
-        "🧪 Attempts": "Completion Attempts",
+        "✨ Generate": "Generate Segment",
+        "🧪 Attempts": "Segment Attempts",
         "📊 Voice": "Voice Analysis",
         "👤 About": "About Audrey",
     }
@@ -209,9 +209,9 @@ def main():
         show_home_page()
     elif page == "Original Manuscripts":
         show_manuscripts_page()
-    elif page == "Generate Completion":
+    elif page == "Generate Segment":
         show_generate_page()
-    elif page == "Completion Attempts":
+    elif page == "Segment Attempts":
         show_completions_page()
     elif page == "Voice Analysis":
         show_analysis_page()
@@ -372,10 +372,10 @@ def show_manuscripts_page():
                 st.code(snippet, language=None)
 
 def show_generate_page():
-    st.markdown('<h2 class="section-header">Generate Completion</h2>', unsafe_allow_html=True)
+    st.markdown('<h2 class="section-header">Generate Segment</h2>', unsafe_allow_html=True)
     
     st.markdown("""
-    Generate a new completion of *The Shadow of Lillya* using LLM technology.
+    Generate a new segment of *The Shadow of Lillya* using LLM technology.
     The system will use Audrey's manuscripts as context to maintain her voice and style.
     """)
     
@@ -396,8 +396,8 @@ def show_generate_page():
         )
         target_words = st.slider("Target words (guideline)", 300, 4000, 1400, 100)
     
-    if st.button("Generate Completion", type="primary"):
-        with st.spinner("Generating completion..."):
+    if st.button("Generate Segment", type="primary"):
+        with st.spinner("Generating segment..."):
             try:
                 import sys
                 
@@ -421,10 +421,10 @@ def show_generate_page():
                 result = subprocess.run(cmd, capture_output=True, text=True, env=env)
                 
                 if result.returncode == 0:
-                    st.success("✅ Completion generated successfully!")
+                    st.success("✅ Segment generated successfully!")
                     st.text_area("Output", result.stdout, height=260)
                 else:
-                    st.error("❌ Error generating completion")
+                    st.error("❌ Error generating segment")
                     if result.stdout:
                         st.text_area("stdout", result.stdout, height=200)
                     if result.stderr:
@@ -433,9 +433,9 @@ def show_generate_page():
                 st.error(f"❌ Error: {e}")
     
     st.markdown("---")
-    st.markdown("### Recent Completions")
+    st.markdown("### Recent Segments")
     
-    # List recent completions
+    # List recent segments (stored under completion_attempts/ for compatibility)
     completion_dir = Path("completion_attempts")
     if completion_dir.exists():
         completion_files = list(completion_dir.rglob("*.md"))
@@ -448,19 +448,19 @@ def show_generate_page():
                         content = f.read()
                     st.markdown(content[:1000] + "..." if len(content) > 1000 else content)
         else:
-            st.info("No completions generated yet. Use the form above to generate your first completion.")
+            st.info("No segments generated yet. Use the form above to generate your first segment.")
 
 def show_completions_page():
-    st.markdown('<h2 class="section-header">Completion Attempts</h2>', unsafe_allow_html=True)
+    st.markdown('<h2 class="section-header">Segment Attempts</h2>', unsafe_allow_html=True)
     
-    # List all completions
+    # List all segments (stored under completion_attempts/ for compatibility)
     completion_dir = Path("completion_attempts")
     if completion_dir.exists():
         completion_files = list(completion_dir.rglob("*.md"))
         completion_files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
         
         if completion_files:
-            st.success(f"Found {len(completion_files)} completion attempt(s)")
+            st.success(f"Found {len(completion_files)} segment(s)")
             
             # Group by model
             by_model = {}
@@ -479,9 +479,9 @@ def show_completions_page():
                         st.text_area("Preview", content[:500] + "..." if len(content) > 500 else content, 
                                    key=str(comp_file), height=200)
         else:
-            st.info("🔄 No completion attempts found. Go to 'Generate Completion' to create your first attempt.")
+            st.info("🔄 No segments found. Go to 'Generate Segment' to create your first segment.")
     else:
-        st.info("🔄 LLM completion attempts will be generated and displayed here.")
+        st.info("🔄 LLM segments will be generated and displayed here.")
 
 def show_analysis_page():
     st.markdown('<h2 class="section-header">Voice Analysis</h2>', unsafe_allow_html=True)

@@ -53,14 +53,14 @@ def _infer_openai_tpm_limit_tokens(model_name: str) -> int:
     return 10_000
 
 def _extract_generated_continuation(markdown: str) -> str:
-    # The completion files saved by this project contain a "## Generated Continuation" section.
-    marker = "## Generated Continuation"
-    if marker in markdown:
-        after = markdown.split(marker, 1)[1]
-        # Cut off at next horizontal rule block if present.
-        if "\n---" in after:
-            after = after.split("\n---", 1)[0]
-        return after.strip()
+    # Support older and newer formats.
+    for marker in ("## Generated Segment", "## Generated Continuation"):
+        if marker in markdown:
+            after = markdown.split(marker, 1)[1]
+            # Cut off at next horizontal rule block if present.
+            if "\n---" in after:
+                after = after.split("\n---", 1)[0]
+            return after.strip()
     return markdown.strip()
 
 def _load_all_markdown_texts(folder: Path) -> str:
@@ -290,6 +290,7 @@ INSTRUCTIONS:
 3. Preserve the thematic elements and narrative style of Audrey's work
 4. Ensure character consistency and plot coherence
 5. Write in a style that matches Audrey's voice as closely as possible
+6. Do not invent chapter numbers or specific historical dates unless they are explicitly provided in the context above.
 
 WRITING REQUEST (optional):
 {writing_request if writing_request else 'Continue naturally from the end of the working Shadow draft.'}
@@ -311,21 +312,23 @@ OUTPUT:
         model_dir = self.completions_dir / self.model_name.lower().replace(' ', '_')
         model_dir.mkdir(exist_ok=True)
         
+        segment_number = int(metadata.get("segment_number") or 0) or None
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"completion_{timestamp}.md"
         filepath = model_dir / filename
         
         # Create markdown file with metadata
-        content = f"""# Completion Attempt - {self.model_name}
+        seg_label = f"Segment {segment_number}" if segment_number else "Segment"
+        content = f"""# {seg_label} - {self.model_name}
 
 **Generated:** {metadata.get('timestamp', datetime.now().isoformat())}
 **Model:** {self.model_name}
 **Version:** {metadata.get('version', '1.0')}
-**Continuation Point:** {metadata.get('continuation_point', 'End of edited manuscript')}
+**Writing request:** {metadata.get('writing_request', '')}
 
 ---
 
-## Generated Continuation
+## Generated Segment
 
 {completion}
 
@@ -447,6 +450,13 @@ def main():
     base_completion = LLMCompletion("base")
     manuscripts = base_completion.load_manuscripts()
     print(f"  ✓ Loaded {len(manuscripts)} manuscript sections")
+
+    # Next segment number = 1 + count of saved segments
+    segment_number = 1
+    try:
+        segment_number = 1 + len(list(base_completion.completions_dir.rglob("completion_*.md")))
+    except Exception:
+        pass
     
     # Create prompt
     print("📝 Creating prompt...")
@@ -479,7 +489,8 @@ def main():
             'timestamp': datetime.now().isoformat(),
             'writing_request': args.writing_request or '',
             'max_tokens': args.max_tokens,
-            'completion_length': len(completion)
+        'completion_length': len(completion),
+        'segment_number': segment_number,
         }
         
         filepath = llm.save_completion(completion, metadata)
