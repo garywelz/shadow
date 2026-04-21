@@ -5,6 +5,20 @@ import os
 import re
 import subprocess
 from dataclasses import dataclass
+from datetime import datetime
+import html
+
+from authoring.parse import (
+    dict_to_manuscript,
+    is_segment_divider,
+    manuscript_to_dict,
+    manuscript_to_markdown,
+    parse_chapters_from_markdown,
+    split_segments,
+)
+from authoring.version_store import get_versions_root, list_versions, load_version, save_version
+from authoring.export_docx import export_docx
+from authoring.export_pdf import export_pdf
 
 # Page configuration
 st.set_page_config(
@@ -54,6 +68,24 @@ st.markdown("""
         padding: 1rem;
         background-color: #f8f9fa;
         border-left: 4px solid #1f77b4;
+    }
+    .reader-wrap {
+        max-width: 820px;
+        margin: 0 auto;
+        line-height: 1.65;
+        font-size: 1.06rem;
+        color: rgba(20, 20, 20, 0.92);
+    }
+    .reader-wrap h2 {
+        margin-top: 1.4rem;
+        margin-bottom: 0.5rem;
+    }
+    .reader-sep {
+        text-align: center;
+        color: rgba(44, 62, 80, 0.55);
+        margin: 1.25rem 0;
+        letter-spacing: 0.2rem;
+        user-select: none;
     }
 
     /* Sidebar styling (Streamlit testid selectors are relatively stable) */
@@ -145,6 +177,59 @@ def _looks_like_openai_key(value: str) -> bool:
 def _looks_like_anthropic_key(value: str) -> bool:
     v = value.strip()
     return v.startswith("sk-ant-")
+
+def _read_shadow_base_markdown() -> tuple[str, str]:
+    edited_dir = MANUSCRIPTS_DIR / "Shadow_of_Lillya" / "edited_version"
+    candidates = sorted(edited_dir.glob("*.md"))
+    if not candidates:
+        return "", ""
+    preferred = None
+    for p in candidates:
+        if "Tyson" in p.name or "Rough Draft" in p.name:
+            preferred = p
+            break
+    path = preferred or candidates[0]
+    return _read_text(str(path)), str(path)
+
+def _render_segment_html(text: str) -> str:
+    # Render plain text as readable paragraphs.
+    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+    html_paras = []
+    for p in paragraphs:
+        html_paras.append(f"<p>{html.escape(p).replace('\\n', '<br/>')}</p>")
+    return "\n".join(html_paras)
+
+def _ensure_current_manuscript_in_state() -> None:
+    if "current_manuscript" in st.session_state:
+        return
+    base_md, base_path = _read_shadow_base_markdown()
+    if not base_md:
+        st.session_state["current_manuscript"] = {"title": "The Shadow of Lillya", "chapters": [], "source_path": None}
+        st.session_state["current_version_name"] = "base"
+        return
+    m = parse_chapters_from_markdown(base_md, manuscript_title="The Shadow of Lillya")
+    data = manuscript_to_dict(m)
+    data["source_path"] = base_path
+    st.session_state["current_manuscript"] = data
+    st.session_state["current_version_name"] = "base"
+
+def _split_chapter_text_to_segments(chapter_text: str) -> list[dict]:
+    # Accept either *** dividers or plain paragraphs.
+    lines = chapter_text.splitlines()
+    segs = split_segments(lines)
+    if not segs:
+        segs = [chapter_text.strip()] if chapter_text.strip() else []
+    out = []
+    for i, t in enumerate(segs, start=1):
+        out.append({"id": f"seg-{i:03d}", "text": t})
+    return out
+
+def _move_item(items: list, index: int, delta: int) -> int:
+    j = index + delta
+    if j < 0 or j >= len(items):
+        return index
+    items[index], items[j] = items[j], items[index]
+    return j
 
 def main():
     # Sidebar navigation (choose page first so we can show a clear "current section" header)
@@ -281,95 +366,229 @@ def show_manuscripts_page():
 
     st.success(f"Found {len(docs)} manuscript file(s).")
 
-    # Project workflow status
-    st.markdown("### Audrey-first workflow status")
-    col_a, col_b, col_c = st.columns(3)
-    with col_a:
-        st.write("**Extracted original material**")
-        st.code("manuscripts/Shadow_of_Lillya/audrey_original/audrey_original_compiled.md", language=None)
-        st.write("✅" if Path("manuscripts/Shadow_of_Lillya/audrey_original/audrey_original_compiled.md").exists() else "— not generated yet")
-    with col_b:
-        st.write("**Edited for clarity**")
-        st.code("manuscripts/Shadow_of_Lillya/audrey_edited/audrey_edited_clean.md", language=None)
-        st.write("✅" if Path("manuscripts/Shadow_of_Lillya/audrey_edited/audrey_edited_clean.md").exists() else "— not generated yet")
-    with col_c:
-        st.write("**Final compilation**")
-        st.code("manuscripts/Shadow_of_Lillya/final_compilation/shadow_of_lillya_final.md", language=None)
-        st.write("✅" if Path("manuscripts/Shadow_of_Lillya/final_compilation/shadow_of_lillya_final.md").exists() else "— not generated yet")
+    tabs = st.tabs(["Reader & Versions", "Workflow Tools", "Raw files"])
 
-    st.markdown("### Run workflow tools (optional)")
-    tool_env = os.environ.copy()
-    # These scripts are local and do not require API keys.
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        if st.button("1) Extract Audrey original", use_container_width=True, disabled=not _script_exists("extract_audrey_material.py")):
-            with st.spinner("Running extract_audrey_material.py..."):
-                rc, out, err = _run_python_script("extract_audrey_material.py", [], tool_env)
-            (st.success if rc == 0 else st.error)(f"Exit code: {rc}")
-            if out:
-                st.text_area("stdout", out, height=220)
-            if err:
-                st.text_area("stderr", err, height=220)
-    with col2:
-        if st.button("2) Edit for clarity", use_container_width=True, disabled=not _script_exists("edit_audrey_material.py")):
-            with st.spinner("Running edit_audrey_material.py..."):
-                rc, out, err = _run_python_script("edit_audrey_material.py", [], tool_env)
-            (st.success if rc == 0 else st.error)(f"Exit code: {rc}")
-            if out:
-                st.text_area("stdout", out, height=220)
-            if err:
-                st.text_area("stderr", err, height=220)
-    with col3:
-        if st.button("3) Compile final manuscript", use_container_width=True, disabled=not _script_exists("compile_final_manuscript.py")):
-            with st.spinner("Running compile_final_manuscript.py..."):
-                rc, out, err = _run_python_script("compile_final_manuscript.py", [], tool_env)
-            (st.success if rc == 0 else st.error)(f"Exit code: {rc}")
-            if out:
-                st.text_area("stdout", out, height=220)
-            if err:
-                st.text_area("stderr", err, height=220)
+    with tabs[0]:
+        _ensure_current_manuscript_in_state()
+        root, persistent_like = get_versions_root()
+        st.caption(f"Versions folder: `{root}`" + (" (persistent)" if persistent_like else " (may be ephemeral)"))
 
-    st.markdown("---")
-    st.markdown("### Browse manuscripts")
-    doc_by_label = {d.label: d for d in docs}
-    selected = st.selectbox("Select a document", options=list(doc_by_label.keys()))
-    info = doc_by_label[selected]
-    st.caption(f"`{info.path}` • {info.words:,} words • {info.bytes/1024/1024:.2f} MB")
+        # Version selection
+        versions = list_versions()
+        version_labels = ["base (Audrey draft)"] + [v.name for v in versions]
+        selected_version = st.selectbox("Current version", options=version_labels, index=0)
+        if selected_version != st.session_state.get("current_version_name", "base"):
+            if selected_version.startswith("base"):
+                base_md, base_path = _read_shadow_base_markdown()
+                m = parse_chapters_from_markdown(base_md, manuscript_title="The Shadow of Lillya")
+                data = manuscript_to_dict(m)
+                data["source_path"] = base_path
+                st.session_state["current_manuscript"] = data
+                st.session_state["current_version_name"] = "base"
+            else:
+                data = load_version(selected_version)
+                st.session_state["current_manuscript"] = data.get("manuscript", data)
+                st.session_state["current_version_name"] = selected_version
 
-    max_chars = st.slider("Preview length (characters)", min_value=2_000, max_value=80_000, value=10_000, step=2_000)
-    text = _read_text(str(info.path))
-    preview = text[:max_chars]
-    st.text_area("Preview", preview, height=420)
-    st.download_button("Download full document", data=text, file_name=info.path.name, mime="text/markdown")
+        manuscript = st.session_state["current_manuscript"]
 
-    st.markdown("---")
-    st.markdown("### Search across manuscripts")
-    q = st.text_input("Keyword / phrase", placeholder="e.g., Lillya, circus, queen, shadow, chapter, character name…")
-    context = st.slider("Context characters around match", 40, 400, 120, 20)
-    max_hits = st.slider("Max hits to show", 5, 50, 15, 5)
+        col_a, col_b = st.columns([2, 1])
+        with col_a:
+            new_name = st.text_input("Save as…", placeholder="shadow_042126")
+        with col_b:
+            if st.button("Save version", use_container_width=True, disabled=not bool(new_name.strip())):
+                payload = {
+                    "meta": {
+                        "created_at": datetime.utcnow().isoformat() + "Z",
+                        "based_on": st.session_state.get("current_version_name", "base"),
+                    },
+                    "manuscript": manuscript,
+                }
+                save_version(new_name.strip(), payload)
+                st.success(f"Saved `{new_name.strip()}`")
 
-    if q.strip():
-        q_norm = q.strip()
-        hits = []
-        for d in docs:
-            t = _read_text(str(d.path))
-            for m in re.finditer(re.escape(q_norm), t, flags=re.IGNORECASE):
-                start = max(0, m.start() - context)
-                end = min(len(t), m.end() + context)
-                snippet = t[start:end].replace("\n", " ")
-                hits.append((d.label, snippet))
+        # Exports
+        export_col1, export_col2, export_col3 = st.columns(3)
+        md_out = manuscript_to_markdown(dict_to_manuscript(manuscript))
+        with export_col1:
+            st.download_button("Download Markdown", data=md_out, file_name=f"{st.session_state.get('current_version_name','shadow')}.md", mime="text/markdown", use_container_width=True)
+        with export_col2:
+            try:
+                docx_bytes = export_docx(manuscript)
+                st.download_button("Download DOCX", data=docx_bytes, file_name=f"{st.session_state.get('current_version_name','shadow')}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
+            except Exception as e:
+                st.caption(f"DOCX export unavailable: {e}")
+        with export_col3:
+            try:
+                pdf_bytes = export_pdf(manuscript)
+                st.download_button("Download PDF", data=pdf_bytes, file_name=f"{st.session_state.get('current_version_name','shadow')}.pdf", mime="application/pdf", use_container_width=True)
+            except Exception as e:
+                st.caption(f"PDF export unavailable: {e}")
+
+        st.markdown("---")
+        chapters = manuscript.get("chapters", [])
+        if not chapters:
+            st.warning("No chapters parsed yet. Check the edited draft file under `manuscripts/Shadow_of_Lillya/edited_version/`.")
+            return
+
+        # Chapter controls
+        chap_titles = [c.get("title") or c.get("id") for c in chapters]
+        if "reader_chapter_idx" not in st.session_state:
+            st.session_state["reader_chapter_idx"] = 0
+        chap_idx = st.selectbox("Chapter", options=list(range(len(chapters))), format_func=lambda i: chap_titles[i], index=st.session_state["reader_chapter_idx"])
+        st.session_state["reader_chapter_idx"] = chap_idx
+
+        nav1, nav2, nav3, nav4 = st.columns([1, 1, 1, 1])
+        with nav1:
+            if st.button("↑ Move chapter", disabled=(chap_idx == 0), use_container_width=True):
+                st.session_state["reader_chapter_idx"] = _move_item(chapters, chap_idx, -1)
+                manuscript["chapters"] = chapters
+        with nav2:
+            if st.button("↓ Move chapter", disabled=(chap_idx >= len(chapters) - 1), use_container_width=True):
+                st.session_state["reader_chapter_idx"] = _move_item(chapters, chap_idx, +1)
+                manuscript["chapters"] = chapters
+        with nav3:
+            if st.button("Add chapter", use_container_width=True):
+                chapters.append({"id": f"ch-{len(chapters)+1:03d}", "title": f"New Chapter {len(chapters)+1}", "segments": [{"id": "seg-001", "text": ""}]})
+                st.session_state["reader_chapter_idx"] = len(chapters) - 1
+                manuscript["chapters"] = chapters
+        with nav4:
+            if st.button("Delete chapter", use_container_width=True):
+                if chapters:
+                    chapters.pop(chap_idx)
+                    st.session_state["reader_chapter_idx"] = max(0, chap_idx - 1)
+                    manuscript["chapters"] = chapters
+
+        chapter = chapters[st.session_state["reader_chapter_idx"]]
+        chapter_title = chapter.get("title") or "Chapter"
+        chapter["title"] = st.text_input("Chapter title", value=chapter_title)
+
+        segs = chapter.get("segments", [])
+        if not segs:
+            chapter["segments"] = [{"id": "seg-001", "text": ""}]
+            segs = chapter["segments"]
+
+        st.markdown("### Read")
+        with st.container():
+            st.markdown(f"<div class='reader-wrap'><h2>{html.escape(chapter['title'])}</h2></div>", unsafe_allow_html=True)
+            for s in segs:
+                st.markdown(f"<div class='reader-wrap'>{_render_segment_html(s.get('text',''))}</div>", unsafe_allow_html=True)
+                st.markdown("<div class='reader-sep'>***</div>", unsafe_allow_html=True)
+
+        st.markdown("---")
+        st.markdown("### Edit")
+        seg_labels = [f"{i+1}. {s.get('id','segment')}" for i, s in enumerate(segs)]
+        if "reader_seg_idx" not in st.session_state:
+            st.session_state["reader_seg_idx"] = 0
+        seg_idx = st.selectbox("Segment", options=list(range(len(segs))), format_func=lambda i: seg_labels[i], index=st.session_state["reader_seg_idx"])
+        st.session_state["reader_seg_idx"] = seg_idx
+        seg = segs[seg_idx]
+        seg["text"] = st.text_area("Segment text", value=seg.get("text", ""), height=260)
+        edit1, edit2, edit3 = st.columns(3)
+        with edit1:
+            if st.button("Add segment", use_container_width=True):
+                segs.append({"id": f"seg-{len(segs)+1:03d}", "text": ""})
+                st.session_state["reader_seg_idx"] = len(segs) - 1
+        with edit2:
+            if st.button("↑ Move segment", disabled=(seg_idx == 0), use_container_width=True):
+                st.session_state["reader_seg_idx"] = _move_item(segs, seg_idx, -1)
+        with edit3:
+            if st.button("↓ Move segment", disabled=(seg_idx >= len(segs) - 1), use_container_width=True):
+                st.session_state["reader_seg_idx"] = _move_item(segs, seg_idx, +1)
+
+        chapter["segments"] = segs
+        manuscript["chapters"][st.session_state["reader_chapter_idx"]] = chapter
+        st.session_state["current_manuscript"] = manuscript
+
+    with tabs[1]:
+        # Project workflow status
+        st.markdown("### Audrey-first workflow status")
+        col_a, col_b, col_c = st.columns(3)
+        with col_a:
+            st.write("**Extracted original material**")
+            st.code("manuscripts/Shadow_of_Lillya/audrey_original/audrey_original_compiled.md", language=None)
+            st.write("✅" if Path("manuscripts/Shadow_of_Lillya/audrey_original/audrey_original_compiled.md").exists() else "— not generated yet")
+        with col_b:
+            st.write("**Edited for clarity**")
+            st.code("manuscripts/Shadow_of_Lillya/audrey_edited/audrey_edited_clean.md", language=None)
+            st.write("✅" if Path("manuscripts/Shadow_of_Lillya/audrey_edited/audrey_edited_clean.md").exists() else "— not generated yet")
+        with col_c:
+            st.write("**Final compilation**")
+            st.code("manuscripts/Shadow_of_Lillya/final_compilation/shadow_of_lillya_final.md", language=None)
+            st.write("✅" if Path("manuscripts/Shadow_of_Lillya/final_compilation/shadow_of_lillya_final.md").exists() else "— not generated yet")
+
+        st.markdown("### Run workflow tools (optional)")
+        tool_env = os.environ.copy()
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if st.button("1) Extract Audrey original", use_container_width=True, disabled=not _script_exists("extract_audrey_material.py")):
+                with st.spinner("Running extract_audrey_material.py..."):
+                    rc, out, err = _run_python_script("extract_audrey_material.py", [], tool_env)
+                (st.success if rc == 0 else st.error)(f"Exit code: {rc}")
+                if out:
+                    st.text_area("stdout", out, height=220)
+                if err:
+                    st.text_area("stderr", err, height=220)
+        with col2:
+            if st.button("2) Edit for clarity", use_container_width=True, disabled=not _script_exists("edit_audrey_material.py")):
+                with st.spinner("Running edit_audrey_material.py..."):
+                    rc, out, err = _run_python_script("edit_audrey_material.py", [], tool_env)
+                (st.success if rc == 0 else st.error)(f"Exit code: {rc}")
+                if out:
+                    st.text_area("stdout", out, height=220)
+                if err:
+                    st.text_area("stderr", err, height=220)
+        with col3:
+            if st.button("3) Compile final manuscript", use_container_width=True, disabled=not _script_exists("compile_final_manuscript.py")):
+                with st.spinner("Running compile_final_manuscript.py..."):
+                    rc, out, err = _run_python_script("compile_final_manuscript.py", [], tool_env)
+                (st.success if rc == 0 else st.error)(f"Exit code: {rc}")
+                if out:
+                    st.text_area("stdout", out, height=220)
+                if err:
+                    st.text_area("stderr", err, height=220)
+
+    with tabs[2]:
+        st.markdown("### Browse manuscripts (raw)")
+        doc_by_label = {d.label: d for d in docs}
+        selected = st.selectbox("Select a document", options=list(doc_by_label.keys()), key="raw_doc_select")
+        info = doc_by_label[selected]
+        st.caption(f"`{info.path}` • {info.words:,} words • {info.bytes/1024/1024:.2f} MB")
+
+        max_chars = st.slider("Preview length (characters)", min_value=2_000, max_value=80_000, value=10_000, step=2_000, key="raw_preview_len")
+        text = _read_text(str(info.path))
+        preview = text[:max_chars]
+        st.text_area("Preview", preview, height=420, key="raw_preview")
+        st.download_button("Download full document", data=text, file_name=info.path.name, mime="text/markdown", key="raw_download")
+
+        st.markdown("---")
+        st.markdown("### Search across manuscripts")
+        q = st.text_input("Keyword / phrase", placeholder="e.g., Lillya, circus, queen, shadow, chapter, character name…", key="raw_search_q")
+        context = st.slider("Context characters around match", 40, 400, 120, 20, key="raw_search_ctx")
+        max_hits = st.slider("Max hits to show", 5, 50, 15, 5, key="raw_search_hits")
+
+        if q.strip():
+            q_norm = q.strip()
+            hits = []
+            for d in docs:
+                t = _read_text(str(d.path))
+                for m in re.finditer(re.escape(q_norm), t, flags=re.IGNORECASE):
+                    start = max(0, m.start() - context)
+                    end = min(len(t), m.end() + context)
+                    snippet = t[start:end].replace("\n", " ")
+                    hits.append((d.label, snippet))
+                    if len(hits) >= max_hits:
+                        break
                 if len(hits) >= max_hits:
                     break
-            if len(hits) >= max_hits:
-                break
 
-        if not hits:
-            st.info("No matches found.")
-        else:
-            st.success(f"Showing {len(hits)} match(es).")
-            for i, (label, snippet) in enumerate(hits, 1):
-                st.markdown(f"**{i}.** `{label}`")
-                st.code(snippet, language=None)
+            if not hits:
+                st.info("No matches found.")
+            else:
+                st.success(f"Showing {len(hits)} match(es).")
+                for i, (label, snippet) in enumerate(hits, 1):
+                    st.markdown(f"**{i}.** `{label}`")
+                    st.code(snippet, language=None)
 
 def show_generate_page():
     st.markdown('<h2 class="section-header">Generate Segment</h2>', unsafe_allow_html=True)
